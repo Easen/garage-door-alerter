@@ -1,50 +1,62 @@
-#include <Arduino.h>
-#include <WiFi.h>
-#include <WiFiClientSecure.h>
-#include <UniversalTelegramBot.h>
-#include <ArxSmartPtr.h>
-#include "PagerDuty.h"
-
 #define WIFI_SSID "..."
 #define WIFI_PASSWORD "..."
 
-#define PG_ENABLED 0
+#define PD_ENABLED 1
 #define PD_ROUTING_KEY "..."
-#define PD_SOURCE "garage_door_alerter"
+#define PD_SOURCE "..."
 
-#define BOT_TOKEN "..."
+#define TG_ENABLED 1
+#define TG_BOT_TOKEN "..."
+#define TG_OWNER_CHAT_ID "..."
 
-#define OWNER_CHAT_ID "..."
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
 
-const unsigned int WIFI_CONNECT_TIMEOUT = 10 * 1000;
-const unsigned int WIFI_CONNECT_CHECK_INTERVAL = 1000;
+#ifdef TG_ENABLED
+#include <UniversalTelegramBot.h>
+#endif
 
-const unsigned long BOT_INTERVAL = 3000;
-const unsigned long CHECK_DOOR_INTERVAL = 2000;
+#ifdef PD_ENABLED
+#include <ArxSmartPtr.h>
+#include "PagerDuty.h"
+#endif
+
+#define SECOND 1000
+const unsigned int WIFI_CONNECT_TIMEOUT = 30 * SECOND;
+const unsigned int WIFI_CONNECT_CHECK_INTERVAL = SECOND;
+
+const unsigned long TG_BOT_INTERVAL = 5 * SECOND;
+unsigned long tg_bot_lasttime;
+
+const unsigned long DOOR_CHECK_INTERVAL = 2 * SECOND;
+unsigned long door_check_lasttime;
+
+const unsigned long RESET_INTERVAL = 24 * 60 * 60 * SECOND;
+unsigned long startup_time;
 
 const int DOOR_SENSOR_PIN = 13;
 const int DOOR_OPENED_LED = 25;
 const int DOOR_CLOSED_LED = 26;
 
+#ifdef TG_ENABLED
 WiFiClientSecure tg_secured_client;
-UniversalTelegramBot bot(BOT_TOKEN, tg_secured_client);
+UniversalTelegramBot bot(TG_BOT_TOKEN, tg_secured_client);
+#endif
 
+#ifdef PD_ENABLED
 WiFiClientSecure pd_secured_client;
 PagerDuty pg(PD_ROUTING_KEY, pd_secured_client);
-
 std::shared_ptr<PagerDutyEvent> current_pg_event;
-
-unsigned long bot_lasttime;
-unsigned long door_check_lasttime;
+#endif
 
 bool wifi_connected;
 int current_door_state;
 int last_door_state;
-bool initial_state = false;
 
 void (*resetFunc)(void) = 0;
 
-static void wifi_connect()
+void wifi_connect()
 {
   WiFi.setHostname("GarageDoorAlerter");
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
@@ -73,9 +85,9 @@ static void wifi_connect()
 
   Serial.println("Connected to WiFi!");
   wifi_connected = true;
-  initial_state = true;
 }
 
+#ifdef TG_ENABLED
 void handleNewMessages(int numNewMessages)
 {
   Serial.println("handleNewMessages");
@@ -86,7 +98,7 @@ void handleNewMessages(int numNewMessages)
     String chat_id = bot.messages[i].chat_id;
     String text = bot.messages[i].text;
 
-    if (!chat_id.equals(OWNER_CHAT_ID))
+    if (!chat_id.equals(TG_OWNER_CHAT_ID))
     {
       bot.sendMessage(chat_id, "403 FORBIDDEN");
       continue;
@@ -96,23 +108,37 @@ void handleNewMessages(int numNewMessages)
     if (from_name == "")
       from_name = "Guest";
 
-    if (text == "/reboot")
+    if (text == "/status")
     {
-      Serial.println("Rebooting!");
-      bot.sendMessage(chat_id, "Rebooting!");
-      // delay(5000);
-      // resetFunc();
+      if (current_door_state == LOW)
+      {
+        bot.sendMessage(chat_id, "Garage door is currently closed");
+      }
+      else
+      {
+        bot.sendMessage(chat_id, "Garage door is currently open");
+      }
     }
 
-    if (text == "/start")
+    if (text == "/uptime")
     {
-      String welcome = "Welcome to Universal Arduino Telegram Bot library, " + from_name + ".\n";
-      welcome += "This is Chat Action Bot example.\n\n";
-      welcome += "/send_test_action : to send test chat action message\n";
-      bot.sendMessage(chat_id, welcome);
+      long m_milliseconds = (millis() - startup_time);
+      long m_seconds = (m_milliseconds / 1000);
+      long m_minutes = (m_seconds / 60);
+      long m_hours = (m_minutes / 60);
+      long m_days = (m_hours / 24);
+
+      long m_mod_milliseconds = m_milliseconds % 1000;
+      long m_mod_seconds = m_seconds % 60;
+      long m_mod_minutes = m_minutes % 60;
+      long m_mod_hours = m_hours % 24;
+      bot.sendMessage(chat_id, (String)(m_mod_hours) + " hours, " +
+                                   (String)(m_mod_minutes) + " minutes, " +
+                                   (String)(m_mod_seconds) + " seconds");
     }
   }
 }
+#endif
 
 void setup()
 {
@@ -125,9 +151,13 @@ void setup()
 
   wifi_connect();
 
+#ifdef TG_ENABLED
   tg_secured_client.setCACert(TELEGRAM_CERTIFICATE_ROOT);
-  pd_secured_client.setCACert(PAGER_DUTY_CERTIFICATE_ROOT);
+#endif
 
+#ifdef PD_ENABLED
+  pd_secured_client.setCACert(PAGER_DUTY_CERTIFICATE_ROOT);
+#endif
   current_door_state = digitalRead(DOOR_SENSOR_PIN);
   if (current_door_state == LOW)
   {
@@ -137,11 +167,13 @@ void setup()
   {
     digitalWrite(DOOR_OPENED_LED, HIGH);
   }
+
+  startup_time = millis();
 }
 
 void monitor_door()
 {
-  if (millis() - door_check_lasttime > CHECK_DOOR_INTERVAL)
+  if (millis() - door_check_lasttime > DOOR_CHECK_INTERVAL)
   {
     Serial.println("Checking door");
     last_door_state = current_door_state;
@@ -153,8 +185,12 @@ void monitor_door()
       digitalWrite(DOOR_OPENED_LED, HIGH);
 
       Serial.println("The door-opening event is detected");
-      bot.sendMessage(OWNER_CHAT_ID, "The door-opening event is detected");
-#ifdef PG_ENABLED
+
+#ifdef TG_ENABLED
+      bot.sendMessage(TG_OWNER_CHAT_ID, "The door-opening event is detected");
+#endif
+
+#ifdef PD_ENABLED
       current_pg_event = pg.create_event(CRITICAL, "Garage Door Opened", PD_SOURCE);
 #endif
     }
@@ -164,20 +200,27 @@ void monitor_door()
       digitalWrite(DOOR_OPENED_LED, LOW);
 
       Serial.println("The door-closing event is detected");
-      bot.sendMessage(OWNER_CHAT_ID, "The door-closing event is detected");
+
+#ifdef TG_ENABLED
+      bot.sendMessage(TG_OWNER_CHAT_ID, "The door-closing event is detected");
+#endif
+
+#ifdef PD_ENABLED
       if (current_pg_event.get() != NULL)
       {
         current_pg_event.get()->resolve();
         current_pg_event.reset();
       }
+#endif
     }
     door_check_lasttime = millis();
   }
 }
 
+#ifdef TG_ENABLED
 void monitor_telegram_bot()
 {
-  if (millis() - bot_lasttime > BOT_INTERVAL)
+  if (millis() - tg_bot_lasttime > TG_BOT_INTERVAL)
   {
     int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
 
@@ -186,18 +229,26 @@ void monitor_telegram_bot()
       Serial.println("got response");
       handleNewMessages(numNewMessages);
     }
-    bot_lasttime = millis();
+    tg_bot_lasttime = millis();
   }
 }
+#endif
+
 void loop()
 {
+  if (millis() - startup_time > RESET_INTERVAL)
+  {
+    Serial.println("Reached reset interval - Restarting...");
+    resetFunc();
+    return;
+  }
 
   if (!wifi_connected)
   {
     return;
   }
 
-  if (wifi_connected && WiFi.status() != WL_CONNECTED)
+  if (WiFi.status() != WL_CONNECTED)
   {
     // was previously connected to wifi
     Serial.println("Wifi connection lost");
@@ -206,5 +257,7 @@ void loop()
 
   monitor_door();
 
+#ifdef TG_ENABLED
   monitor_telegram_bot();
+#endif
 }
