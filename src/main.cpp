@@ -9,6 +9,13 @@
 #define TG_BOT_TOKEN "..."
 #define TG_OWNER_CHAT_ID "..."
 
+// #define DEBUG 1
+#ifdef DEBUG
+#define DEBUG_PRINT(x) Serial.println(x)
+#else
+#define DEBUG_PRINT(x)
+#endif
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -65,9 +72,10 @@ void wifi_connect()
   int duration = 0;
   while (WiFi.status() != WL_CONNECTED && duration < WIFI_CONNECT_TIMEOUT)
   {
+    DEBUG_PRINT("Connecting to WiFi...");
+
     delay(WIFI_CONNECT_CHECK_INTERVAL);
     duration += WIFI_CONNECT_CHECK_INTERVAL;
-    Serial.println("Connecting to WiFi...");
     digitalWrite(DOOR_CLOSED_LED, HIGH);
     delay(500);
     duration += 500;
@@ -79,19 +87,18 @@ void wifi_connect()
   }
   if (WiFi.status() != WL_CONNECTED)
   {
-    Serial.println("Failed to connect, restarting!");
+    DEBUG_PRINT("Failed to connect, restarting!");
     resetFunc();
   }
-
-  Serial.println("Connected to WiFi!");
+  ` DEBUG_PRINT("Connected to WiFi!");
   wifi_connected = true;
 }
 
 #ifdef TG_ENABLED
 void handleNewMessages(int numNewMessages)
 {
-  Serial.println("handleNewMessages");
-  Serial.println(String(numNewMessages));
+  DEBUG_PRINT("handleNewMessages");
+  DEBUG_PRINT(String(numNewMessages));
 
   for (int i = 0; i < numNewMessages; i++)
   {
@@ -175,7 +182,7 @@ void monitor_door()
 {
   if (millis() - door_check_lasttime > DOOR_CHECK_INTERVAL)
   {
-    Serial.println("Checking door");
+    DEBUG_PRINT("Checking door");
     last_door_state = current_door_state;
     current_door_state = digitalRead(DOOR_SENSOR_PIN);
 
@@ -184,7 +191,7 @@ void monitor_door()
       digitalWrite(DOOR_CLOSED_LED, LOW);
       digitalWrite(DOOR_OPENED_LED, HIGH);
 
-      Serial.println("The door-opening event is detected");
+      DEBUG_PRINT("The door-opening event is detected");
 
 #ifdef TG_ENABLED
       bot.sendMessage(TG_OWNER_CHAT_ID, "The door-opening event is detected");
@@ -199,7 +206,7 @@ void monitor_door()
       digitalWrite(DOOR_CLOSED_LED, HIGH);
       digitalWrite(DOOR_OPENED_LED, LOW);
 
-      Serial.println("The door-closing event is detected");
+      DEBUG_PRINT("The door-closing event is detected");
 
 #ifdef TG_ENABLED
       bot.sendMessage(TG_OWNER_CHAT_ID, "The door-closing event is detected");
@@ -226,7 +233,7 @@ void monitor_telegram_bot()
 
     if (numNewMessages > 0)
     {
-      Serial.println("got response");
+      DEBUG_PRINT("got response");
       handleNewMessages(numNewMessages);
     }
     tg_bot_lasttime = millis();
@@ -238,7 +245,7 @@ void loop()
 {
   if (millis() - startup_time > RESET_INTERVAL)
   {
-    Serial.println("Reached reset interval - Restarting...");
+    DEBUG_PRINT("Reached reset interval - Restarting...");
     resetFunc();
     return;
   }
@@ -251,7 +258,7 @@ void loop()
   if (WiFi.status() != WL_CONNECTED)
   {
     // was previously connected to wifi
-    Serial.println("Wifi connection lost");
+    DEBUG_PRINT("Wifi connection lost");
     wifi_connect();
   }
 

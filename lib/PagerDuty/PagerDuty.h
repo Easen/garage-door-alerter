@@ -6,7 +6,7 @@
 #include <Client.h>
 #include <ArxSmartPtr.h>
 
-#define PAGER_DUTY_DEBUG 1
+// #define PAGER_DUTY_DEBUG 1
 
 #define PAGER_DUTY_HOST "events.pagerduty.com"
 #define PAGER_DUTY_PORT 443
