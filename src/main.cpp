@@ -90,7 +90,7 @@ void wifi_connect()
     DEBUG_PRINT("Failed to connect, restarting!");
     resetFunc();
   }
-  ` DEBUG_PRINT("Connected to WiFi!");
+  DEBUG_PRINT("Connected to WiFi!");
   wifi_connected = true;
 }
 
