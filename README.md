@@ -21,4 +21,4 @@ EPS32 Garage Door Alerter
 
 ## Configuration
 
-See `src/main.cpp`.
+See `src/config.h`.

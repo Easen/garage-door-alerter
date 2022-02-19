@@ -1,24 +1,17 @@
-#define WIFI_SSID "..."
-#define WIFI_PASSWORD "..."
+#include <Arduino.h>
+#include <Preferences.h>
+#include "config.h"
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <ESPmDNS.h>
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
 
-#define PD_ENABLED 1
-#define PD_ROUTING_KEY "..."
-#define PD_SOURCE "..."
-
-#define TG_ENABLED 1
-#define TG_BOT_TOKEN "..."
-#define TG_OWNER_CHAT_ID "..."
-
-// #define DEBUG 1
 #ifdef DEBUG
 #define DEBUG_PRINT(x) Serial.println(x)
 #else
 #define DEBUG_PRINT(x)
 #endif
-
-#include <Arduino.h>
-#include <WiFi.h>
-#include <WiFiClientSecure.h>
 
 #ifdef TG_ENABLED
 #include <UniversalTelegramBot.h>
@@ -29,24 +22,15 @@
 #include "PagerDuty.h"
 #endif
 
-#define SECOND 1000
-const unsigned int WIFI_CONNECT_TIMEOUT = 30 * SECOND;
-const unsigned int WIFI_CONNECT_CHECK_INTERVAL = SECOND;
+Preferences preferences;
+#define PREFERENCE_NS "garage-door"
+#define PREFERENCE_RESTART_REASON_KEY "restart_reason"
 
-const unsigned long TG_BOT_INTERVAL = 5 * SECOND;
-unsigned long tg_bot_lasttime;
-
-const unsigned long DOOR_CHECK_INTERVAL = 2 * SECOND;
 unsigned long door_check_lasttime;
-
-const unsigned long RESET_INTERVAL = 24 * 60 * 60 * SECOND;
 unsigned long startup_time;
 
-const int DOOR_SENSOR_PIN = 13;
-const int DOOR_OPENED_LED = 25;
-const int DOOR_CLOSED_LED = 26;
-
 #ifdef TG_ENABLED
+unsigned long tg_bot_lasttime;
 WiFiClientSecure tg_secured_client;
 UniversalTelegramBot bot(TG_BOT_TOKEN, tg_secured_client);
 #endif
@@ -60,12 +44,12 @@ std::shared_ptr<PagerDutyEvent> current_pg_event;
 bool wifi_connected;
 int current_door_state;
 int last_door_state;
-
-void (*resetFunc)(void) = 0;
+bool restart_flag;
 
 void wifi_connect()
 {
   WiFi.setHostname("GarageDoorAlerter");
+  WiFi.mode(WIFI_STA);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
@@ -88,10 +72,88 @@ void wifi_connect()
   if (WiFi.status() != WL_CONNECTED)
   {
     DEBUG_PRINT("Failed to connect, restarting!");
-    resetFunc();
+    preferences.getString(PREFERENCE_RESTART_REASON_KEY, "Failed to connect to WiFi");
+    preferences.end();
+    delay(1000);
+    ESP.restart();
   }
   DEBUG_PRINT("Connected to WiFi!");
   wifi_connected = true;
+}
+
+void arduino_ota_setup()
+{
+  ArduinoOTA.setHostname("garage-door-alerter");
+  ArduinoOTA
+      .onStart([]()
+               {
+      String type;
+      if (ArduinoOTA.getCommand() == U_FLASH)
+        type = "sketch";
+      else // U_SPIFFS
+        type = "filesystem";
+
+      // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
+      DEBUG_PRINT("Start updating " + type); })
+      .onEnd([]()
+             { DEBUG_PRINT("\nEnd"); })
+      .onError([](ota_error_t error)
+               {
+      Serial.printf("Error[%u]: ", error);
+      if (error == OTA_AUTH_ERROR) DEBUG_PRINT("Auth Failed");
+      else if (error == OTA_BEGIN_ERROR) DEBUG_PRINT("Begin Failed");
+      else if (error == OTA_CONNECT_ERROR) DEBUG_PRINT("Connect Failed");
+      else if (error == OTA_RECEIVE_ERROR) DEBUG_PRINT("Receive Failed");
+      else if (error == OTA_END_ERROR) DEBUG_PRINT("End Failed"); });
+
+  ArduinoOTA.begin();
+}
+
+void update_door_status_led(bool door_closed)
+{
+  if (door_closed)
+  {
+    digitalWrite(DOOR_CLOSED_LED, HIGH);
+    digitalWrite(DOOR_OPENED_LED, LOW);
+  }
+  else
+  {
+    digitalWrite(DOOR_OPENED_LED, HIGH);
+    digitalWrite(DOOR_CLOSED_LED, LOW);
+  }
+}
+
+void door_opened_event()
+{
+  update_door_status_led(false);
+
+  DEBUG_PRINT("The door-opening event is detected");
+
+#ifdef TG_ENABLED
+  bot.sendMessage(TG_OWNER_CHAT_ID, "The door-opening event is detected");
+#endif
+
+#ifdef PD_ENABLED
+  current_pg_event = pg.create_event(CRITICAL, "Garage Door Opened", PD_SOURCE);
+#endif
+}
+void door_closed_event()
+{
+  update_door_status_led(true);
+
+  DEBUG_PRINT("The door-closing event is detected");
+
+#ifdef TG_ENABLED
+  bot.sendMessage(TG_OWNER_CHAT_ID, "The door-closing event is detected");
+#endif
+
+#ifdef PD_ENABLED
+  if (current_pg_event.get() != NULL)
+  {
+    current_pg_event.get()->resolve();
+    current_pg_event.reset();
+  }
+#endif
 }
 
 #ifdef TG_ENABLED
@@ -111,9 +173,26 @@ void handleNewMessages(int numNewMessages)
       continue;
     }
 
+    static bool confirm_restart = false;
+
     String from_name = bot.messages[i].from_name;
     if (from_name == "")
+    {
       from_name = "Guest";
+    }
+
+    if (confirm_restart)
+    {
+      if (text.equalsIgnoreCase("yes"))
+      {
+        restart_flag = true;
+        bot.sendMessage(chat_id, "Restarting...");
+        preferences.putString(PREFERENCE_RESTART_REASON_KEY, "/restart command was issued");
+        preferences.end();
+        continue;
+      }
+      confirm_restart = false;
+    }
 
     if (text == "/status")
     {
@@ -125,6 +204,25 @@ void handleNewMessages(int numNewMessages)
       {
         bot.sendMessage(chat_id, "Garage door is currently open");
       }
+    }
+
+    if (text == "/test")
+    {
+      bot.sendMessage(chat_id, "Starting test in 3 seconds...");
+      delay(3000);
+      door_opened_event();
+      bot.sendMessage(chat_id, "Awaiting 10 seconds before triggering a close event...");
+      delay(10000);
+      door_closed_event();
+      bot.sendMessage(chat_id, "Test complete! Re-arming the device in 3 seconds...");
+      delay(3000);
+      current_door_state = -1;
+    }
+
+    if (text == "/restart")
+    {
+      confirm_restart = true;
+      bot.sendMessage(chat_id, "Please confirm you wish to restart the device (yes/no)?");
     }
 
     if (text == "/uptime")
@@ -151,6 +249,8 @@ void setup()
 {
   Serial.begin(9600);
 
+  preferences.begin(PREFERENCE_NS, false);
+
   pinMode(DOOR_SENSOR_PIN, INPUT_PULLUP);
 
   pinMode(DOOR_CLOSED_LED, OUTPUT);
@@ -158,23 +258,29 @@ void setup()
 
   wifi_connect();
 
+  arduino_ota_setup();
+
+  String restart_reason = preferences.getString(PREFERENCE_RESTART_REASON_KEY, "");
+  DEBUG_PRINT("Reboot reason: " + restart_reason);
+
 #ifdef TG_ENABLED
   tg_secured_client.setCACert(TELEGRAM_CERTIFICATE_ROOT);
+  if (restart_reason.length() > 0)
+  {
+    preferences.putString(PREFERENCE_RESTART_REASON_KEY, "");
+    bot.sendMessage(TG_OWNER_CHAT_ID, "Device is online. Reason for restart: " + restart_reason);
+  }
+  else
+  {
+    bot.sendMessage(TG_OWNER_CHAT_ID, "Device is online.");
+  }
 #endif
 
 #ifdef PD_ENABLED
   pd_secured_client.setCACert(PAGER_DUTY_CERTIFICATE_ROOT);
 #endif
-  current_door_state = digitalRead(DOOR_SENSOR_PIN);
-  if (current_door_state == LOW)
-  {
-    digitalWrite(DOOR_CLOSED_LED, HIGH);
-  }
-  else
-  {
-    digitalWrite(DOOR_OPENED_LED, HIGH);
-  }
 
+  current_door_state = -1;
   startup_time = millis();
 }
 
@@ -186,39 +292,13 @@ void monitor_door()
     last_door_state = current_door_state;
     current_door_state = digitalRead(DOOR_SENSOR_PIN);
 
-    if (last_door_state == LOW && current_door_state == HIGH)
+    if ((last_door_state == LOW || last_door_state == -1) && current_door_state == HIGH)
     {
-      digitalWrite(DOOR_CLOSED_LED, LOW);
-      digitalWrite(DOOR_OPENED_LED, HIGH);
-
-      DEBUG_PRINT("The door-opening event is detected");
-
-#ifdef TG_ENABLED
-      bot.sendMessage(TG_OWNER_CHAT_ID, "The door-opening event is detected");
-#endif
-
-#ifdef PD_ENABLED
-      current_pg_event = pg.create_event(CRITICAL, "Garage Door Opened", PD_SOURCE);
-#endif
+      door_opened_event();
     }
-    else if (last_door_state == HIGH && current_door_state == LOW)
+    else if ((last_door_state == HIGH || last_door_state == -1) && current_door_state == LOW)
     {
-      digitalWrite(DOOR_CLOSED_LED, HIGH);
-      digitalWrite(DOOR_OPENED_LED, LOW);
-
-      DEBUG_PRINT("The door-closing event is detected");
-
-#ifdef TG_ENABLED
-      bot.sendMessage(TG_OWNER_CHAT_ID, "The door-closing event is detected");
-#endif
-
-#ifdef PD_ENABLED
-      if (current_pg_event.get() != NULL)
-      {
-        current_pg_event.get()->resolve();
-        current_pg_event.reset();
-      }
-#endif
+      door_closed_event();
     }
     door_check_lasttime = millis();
   }
@@ -243,15 +323,13 @@ void monitor_telegram_bot()
 
 void loop()
 {
-  if (millis() - startup_time > RESET_INTERVAL)
-  {
-    DEBUG_PRINT("Reached reset interval - Restarting...");
-    resetFunc();
-    return;
-  }
+  ArduinoOTA.handle();
 
-  if (!wifi_connected)
+  if (restart_flag)
   {
+    DEBUG_PRINT("restart_flag=true");
+    delay(1000);
+    ESP.restart();
     return;
   }
 
@@ -259,7 +337,30 @@ void loop()
   {
     // was previously connected to wifi
     DEBUG_PRINT("Wifi connection lost");
-    wifi_connect();
+    preferences.putString(PREFERENCE_RESTART_REASON_KEY, "Wifi connection lost");
+    preferences.end();
+    restart_flag = true;
+    return;
+  }
+
+  if (millis() - startup_time > DEVICE_TTL)
+  {
+    DEBUG_PRINT("Reached device TTL - Restarting...");
+#ifdef TG_ENABLED
+    if (wifi_connected)
+    {
+      bot.sendMessage(TG_OWNER_CHAT_ID, "Device is restarting as it has reached its TTL");
+    }
+#endif
+    preferences.putString(PREFERENCE_RESTART_REASON_KEY, "Device reached TTL");
+    preferences.end();
+    restart_flag = true;
+    return;
+  }
+
+  if (!wifi_connected)
+  {
+    return;
   }
 
   monitor_door();
