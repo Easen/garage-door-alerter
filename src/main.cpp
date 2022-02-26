@@ -111,15 +111,16 @@ void arduino_ota_setup()
 
 void update_door_status_led(bool door_closed)
 {
+  digitalWrite(DOOR_OPENED_LED, LOW);
+  digitalWrite(DOOR_CLOSED_LED, LOW);
+
   if (door_closed)
   {
     digitalWrite(DOOR_CLOSED_LED, HIGH);
-    digitalWrite(DOOR_OPENED_LED, LOW);
   }
-  else
+  else if (!STEALTH_MODE)
   {
     digitalWrite(DOOR_OPENED_LED, HIGH);
-    digitalWrite(DOOR_CLOSED_LED, LOW);
   }
 }
 
