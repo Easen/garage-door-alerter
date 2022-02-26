@@ -45,6 +45,10 @@ bool wifi_connected;
 int current_door_state;
 int last_door_state;
 bool restart_flag;
+const String DOOR_OPENING_MSG = "The garage door has been OPENED.";
+const String DOOR_OPEN_MSG = "The garage door is currently OPEN.";
+const String DOOR_CLOSING_MSG = "The garage door has been CLOSED.";
+const String DOOR_CLOSED_MSG = "The garage door is currently CLOSED.";
 
 void wifi_connect()
 {
@@ -128,24 +132,25 @@ void door_opened_event()
 {
   update_door_status_led(false);
 
-  DEBUG_PRINT("The door-opening event is detected");
+  DEBUG_PRINT(DOOR_OPENING_MSG);
 
 #ifdef TG_ENABLED
-  bot.sendMessage(TG_OWNER_CHAT_ID, "The door-opening event is detected");
+  bot.sendMessage(TG_OWNER_CHAT_ID, DOOR_OPENING_MSG);
 #endif
 
 #ifdef PD_ENABLED
   current_pg_event = pg.create_event(CRITICAL, "Garage Door Opened", PD_SOURCE);
 #endif
 }
+
 void door_closed_event()
 {
   update_door_status_led(true);
 
-  DEBUG_PRINT("The door-closing event is detected");
+  DEBUG_PRINT(DOOR_CLOSING_MSG);
 
 #ifdef TG_ENABLED
-  bot.sendMessage(TG_OWNER_CHAT_ID, "The door-closing event is detected");
+  bot.sendMessage(TG_OWNER_CHAT_ID, DOOR_CLOSING_MSG);
 #endif
 
 #ifdef PD_ENABLED
@@ -199,11 +204,11 @@ void handleNewMessages(int numNewMessages)
     {
       if (current_door_state == LOW)
       {
-        bot.sendMessage(chat_id, "Garage door is currently closed");
+        bot.sendMessage(chat_id, DOOR_CLOSED_MSG);
       }
       else
       {
-        bot.sendMessage(chat_id, "Garage door is currently open");
+        bot.sendMessage(chat_id, DOOR_OPEN_MSG);
       }
     }
 
@@ -246,45 +251,6 @@ void handleNewMessages(int numNewMessages)
 }
 #endif
 
-void setup()
-{
-  Serial.begin(9600);
-
-  preferences.begin(PREFERENCE_NS, false);
-
-  pinMode(DOOR_SENSOR_PIN, INPUT_PULLUP);
-
-  pinMode(DOOR_CLOSED_LED, OUTPUT);
-  pinMode(DOOR_OPENED_LED, OUTPUT);
-
-  wifi_connect();
-
-  arduino_ota_setup();
-
-  String restart_reason = preferences.getString(PREFERENCE_RESTART_REASON_KEY, "");
-  DEBUG_PRINT("Reboot reason: " + restart_reason);
-
-#ifdef TG_ENABLED
-  tg_secured_client.setCACert(TELEGRAM_CERTIFICATE_ROOT);
-  if (restart_reason.length() > 0)
-  {
-    preferences.putString(PREFERENCE_RESTART_REASON_KEY, "");
-    bot.sendMessage(TG_OWNER_CHAT_ID, "Device is online. Reason for restart: " + restart_reason);
-  }
-  else
-  {
-    bot.sendMessage(TG_OWNER_CHAT_ID, "Device is online.");
-  }
-#endif
-
-#ifdef PD_ENABLED
-  pd_secured_client.setCACert(PAGER_DUTY_CERTIFICATE_ROOT);
-#endif
-
-  current_door_state = -1;
-  startup_time = millis();
-}
-
 void monitor_door()
 {
   if (millis() - door_check_lasttime > DOOR_CHECK_INTERVAL)
@@ -321,6 +287,50 @@ void monitor_telegram_bot()
   }
 }
 #endif
+
+void setup()
+{
+  Serial.begin(9600);
+
+  preferences.begin(PREFERENCE_NS, false);
+
+  pinMode(DOOR_SENSOR_PIN, INPUT_PULLUP);
+
+  pinMode(DOOR_CLOSED_LED, OUTPUT);
+  pinMode(DOOR_OPENED_LED, OUTPUT);
+
+  wifi_connect();
+
+  arduino_ota_setup();
+
+  String restart_reason = preferences.getString(PREFERENCE_RESTART_REASON_KEY, "");
+  DEBUG_PRINT("Reboot reason: " + restart_reason);
+
+  current_door_state = digitalRead(DOOR_SENSOR_PIN);
+#ifdef TG_ENABLED
+  tg_secured_client.setCACert(TELEGRAM_CERTIFICATE_ROOT);
+  String current_door_msg = DOOR_OPEN_MSG;
+  if (current_door_state == LOW)
+  {
+    current_door_msg = DOOR_CLOSED_MSG;
+  }
+  if (restart_reason.length() > 0)
+  {
+    preferences.putString(PREFERENCE_RESTART_REASON_KEY, "");
+    bot.sendMessage(TG_OWNER_CHAT_ID, "Device is online. Reason for restart: \n" + restart_reason + "\n\n" + current_door_msg);
+  }
+  else
+  {
+    bot.sendMessage(TG_OWNER_CHAT_ID, "Device is online.\n\n" + current_door_msg);
+  }
+#endif
+
+#ifdef PD_ENABLED
+  pd_secured_client.setCACert(PAGER_DUTY_CERTIFICATE_ROOT);
+#endif
+
+  startup_time = millis();
+}
 
 void loop()
 {
