@@ -22,6 +22,7 @@ const unsigned int WIFI_CONNECT_CHECK_INTERVAL = SECOND;
 const unsigned long TG_BOT_INTERVAL = 5 * SECOND;
 
 // Device
+#define DEVICE_NAME "garage-door-alerter-test"
 #define DOOR_SENSOR_PIN 13
 #define DOOR_OPENED_LED 25
 #define DOOR_CLOSED_LED 26

@@ -52,7 +52,7 @@ const String DOOR_CLOSED_MSG = "The garage door is currently CLOSED.";
 
 void wifi_connect()
 {
-  WiFi.setHostname("GarageDoorAlerter");
+  WiFi.setHostname(DEVICE_NAME);
   WiFi.mode(WIFI_STA);
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -87,7 +87,7 @@ void wifi_connect()
 
 void arduino_ota_setup()
 {
-  ArduinoOTA.setHostname("garage-door-alerter");
+  ArduinoOTA.setHostname(DEVICE_NAME);
   ArduinoOTA
       .onStart([]()
                {
