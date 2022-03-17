@@ -50,6 +50,22 @@ const String DOOR_OPEN_MSG = "The garage door is currently OPEN.";
 const String DOOR_CLOSING_MSG = "The garage door has been CLOSED.";
 const String DOOR_CLOSED_MSG = "The garage door is currently CLOSED.";
 
+String millisToString(long ms)
+{
+  long seconds = (ms / 1000);
+  long minutes = (seconds / 60);
+  long hours = (minutes / 60);
+  long days = (hours / 24);
+
+  long mod_ms = ms % 1000;
+  long mod_seconds = seconds % 60;
+  long mod_minutes = minutes % 60;
+  long mod_hour = hours % 24;
+  return (String)(days) + " days, " +
+         (String)(mod_hour) + " hours, " +
+         (String)(mod_minutes) + " minutes, " +
+         (String)(mod_seconds) + " seconds";
+}
 void wifi_connect()
 {
   WiFi.setHostname(DEVICE_NAME);
@@ -233,19 +249,8 @@ void handleNewMessages(int numNewMessages)
 
     if (text == "/uptime")
     {
-      long m_milliseconds = (millis() - startup_time);
-      long m_seconds = (m_milliseconds / 1000);
-      long m_minutes = (m_seconds / 60);
-      long m_hours = (m_minutes / 60);
-      long m_days = (m_hours / 24);
-
-      long m_mod_milliseconds = m_milliseconds % 1000;
-      long m_mod_seconds = m_seconds % 60;
-      long m_mod_minutes = m_minutes % 60;
-      long m_mod_hours = m_hours % 24;
-      bot.sendMessage(chat_id, (String)(m_mod_hours) + " hours, " +
-                                   (String)(m_mod_minutes) + " minutes, " +
-                                   (String)(m_mod_seconds) + " seconds");
+      String uptime = millisToString(millis() - startup_time);
+      bot.sendMessage(chat_id, uptime);
     }
   }
 }

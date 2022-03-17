@@ -27,7 +27,7 @@ const unsigned long TG_BOT_INTERVAL = 5 * SECOND;
 #define DOOR_OPENED_LED 25
 #define DOOR_CLOSED_LED 26
 const unsigned long DOOR_CHECK_INTERVAL = 2 * SECOND;
-const unsigned long DEVICE_TTL = 24 * 60 * 60 * SECOND;
+const unsigned long DEVICE_TTL = 7 * 24 * 60 * 60 * SECOND;
 const bool STEALTH_MODE = true;
 
 // Enable debug?
