@@ -28,6 +28,7 @@ Preferences preferences;
 
 unsigned long door_check_lasttime;
 unsigned long startup_time;
+unsigned long door_event_counter;
 
 #ifdef TG_ENABLED
 unsigned long tg_bot_lasttime;
@@ -50,7 +51,7 @@ const String DOOR_OPEN_MSG = "The garage door is currently OPEN.";
 const String DOOR_CLOSING_MSG = "The garage door has been CLOSED.";
 const String DOOR_CLOSED_MSG = "The garage door is currently CLOSED.";
 
-String millisToString(long ms)
+String millisToString(unsigned long long ms)
 {
   long seconds = (ms / 1000);
   long minutes = (seconds / 60);
@@ -209,7 +210,7 @@ void handleNewMessages(int numNewMessages)
       {
         restart_flag = true;
         bot.sendMessage(chat_id, "Restarting...");
-        preferences.putString(PREFERENCE_RESTART_REASON_KEY, "/restart command was issued");
+        preferences.putString(PREFERENCE_RESTART_REASON_KEY, "/restart command was issued by " + from_name);
         preferences.end();
         continue;
       }
@@ -252,6 +253,23 @@ void handleNewMessages(int numNewMessages)
       String uptime = millisToString(millis() - startup_time);
       bot.sendMessage(chat_id, uptime);
     }
+
+    if (text == "/stats")
+    {
+      uint32_t heap_size = ESP.getHeapSize();
+      uint32_t free_heap = ESP.getFreeHeap();
+
+      float heap_used_percentage = ((float)(heap_size - free_heap) / heap_size) * 100;
+
+      bot.sendMessage(
+          chat_id,
+          "Number of open door events: " + (String)door_event_counter +
+              "\nIP Address: " + WiFi.localIP().toString() +
+              "\nWiFi Signal Strength: " + WiFi.RSSI() +
+              "\nHeap Usage: " + (String)(heap_used_percentage) + "%" +
+              "\nUptime: " + millisToString(millis() - startup_time) +
+              "\nTTL Restart Due: " + millisToString(DEVICE_TTL - millis() - startup_time));
+    }
   }
 }
 #endif
@@ -267,6 +285,7 @@ void monitor_door()
     if ((last_door_state == LOW || last_door_state == -1) && current_door_state == HIGH)
     {
       door_opened_event();
+      door_event_counter++;
     }
     else if ((last_door_state == HIGH || last_door_state == -1) && current_door_state == LOW)
     {
