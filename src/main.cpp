@@ -6,6 +6,7 @@
 #include <ESPmDNS.h>
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
+#include "BLEDeviceScanner.h"
 
 #ifdef DEBUG
 #define DEBUG_PRINT(x) Serial.println(x)
@@ -42,11 +43,14 @@ PagerDuty pg(PD_ROUTING_KEY, pd_secured_client);
 std::shared_ptr<PagerDutyEvent> current_pg_event;
 #endif
 
+auto bleDeviceScanner = new BLEDeviceScanner();
+
 bool wifi_connected;
 int current_door_state;
 int last_door_state;
 bool restart_flag;
 const String DOOR_OPENING_MSG = "The garage door has been OPENED.";
+const String DOOR_OPENING_MSG_WITH_KEY_FOB = "The garage door has been OPENED.\n\nKey fob detected.";
 const String DOOR_OPEN_MSG = "The garage door is currently OPEN.";
 const String DOOR_CLOSING_MSG = "The garage door has been CLOSED.";
 const String DOOR_CLOSED_MSG = "The garage door is currently CLOSED.";
@@ -151,12 +155,17 @@ void door_opened_event()
 
   DEBUG_PRINT(DOOR_OPENING_MSG);
 
+  bool keyFobPresent = bleDeviceScanner->isBLEDeviceNearby(keyFobs);
+
 #ifdef TG_ENABLED
-  bot.sendMessage(TG_OWNER_CHAT_ID, DOOR_OPENING_MSG);
+  bot.sendMessage(TG_OWNER_CHAT_ID, (keyFobPresent ? DOOR_OPENING_MSG_WITH_KEY_FOB : DOOR_OPENING_MSG));
 #endif
 
 #ifdef PD_ENABLED
-  current_pg_event = pg.create_event(CRITICAL, "Garage Door Opened", PD_SOURCE);
+  if (!keyFobPresent)
+  {
+    current_pg_event = pg.create_event(CRITICAL, "Garage Door Opened", PD_SOURCE);
+  }
 #endif
 }
 
@@ -259,16 +268,15 @@ void handleNewMessages(int numNewMessages)
       uint32_t heap_size = ESP.getHeapSize();
       uint32_t free_heap = ESP.getFreeHeap();
 
-      float heap_used_percentage = ((float)(heap_size - free_heap) / heap_size) * 100;
-
       bot.sendMessage(
           chat_id,
           "Number of open door events: " + (String)door_event_counter +
               "\nIP Address: " + WiFi.localIP().toString() +
               "\nWiFi Signal Strength: " + WiFi.RSSI() +
-              "\nHeap Usage: " + (String)(heap_used_percentage) + "%" +
+              "\nHeap Usage: " + (String)(((float)(heap_size - free_heap) / heap_size) * 100) + "%" +
               "\nUptime: " + millisToString(millis() - startup_time) +
-              "\nTTL Restart Due: " + millisToString(DEVICE_TTL - millis() - startup_time));
+              "\nTTL Restart Due: " + millisToString(DEVICE_TTL - millis() - startup_time) +
+              "\nMonimoto Key Fob In Range: " + (bleDeviceScanner->isBLEDeviceNearby(keyFobs) ? "YES" : "NO"));
     }
   }
 }
@@ -326,6 +334,8 @@ void setup()
   wifi_connect();
 
   arduino_ota_setup();
+
+  bleDeviceScanner->setup(BLE_SCAN_DURATION, BLE_MAX_RSSI);
 
   String restart_reason = preferences.getString(PREFERENCE_RESTART_REASON_KEY, "");
   DEBUG_PRINT("Reboot reason: " + restart_reason);
