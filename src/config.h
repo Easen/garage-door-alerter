@@ -27,6 +27,7 @@ const unsigned long TG_BOT_INTERVAL = 5 * SECOND;
 // #define BLE_ENABLED
 #define BLE_SCAN_DURATION 5
 #define BLE_MAX_RSSI -80
+std::vector<String> keyFobs = {};
 
 // Webhook
 // #define WEBHOOK_ENABLED
