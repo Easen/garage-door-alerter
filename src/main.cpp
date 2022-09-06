@@ -3,10 +3,12 @@
 #include "config.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
-#include <ESPmDNS.h>
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
+
+#ifdef BLE_ENABLED
 #include "BLEDeviceScanner.h"
+#endif
 
 #ifdef DEBUG
 #define DEBUG_PRINT(x) Serial.println(x)
@@ -16,11 +18,25 @@
 
 #ifdef TG_ENABLED
 #include <UniversalTelegramBot.h>
+unsigned long tg_bot_lasttime;
+WiFiClientSecure tg_secured_client;
+UniversalTelegramBot bot(TG_BOT_TOKEN, tg_secured_client);
 #endif
 
 #ifdef PD_ENABLED
-#include <ArxSmartPtr.h>
 #include "PagerDuty.h"
+WiFiClientSecure pd_secured_client;
+PagerDuty pg(PD_ROUTING_KEY, pd_secured_client);
+std::shared_ptr<PagerDutyEvent> current_pg_event;
+#endif
+
+#ifdef WEBHOOK_ENABLED
+#include "Webhook.h"
+Webhook webhook(WEBHOOK_SSL, WEBHOOK_HOSTNAME, WEBHOOK_PORT, WEBHOOK_PATH);
+#endif
+
+#ifdef BLE_ENABLED
+auto bleDeviceScanner = new BLEDeviceScanner();
 #endif
 
 Preferences preferences;
@@ -31,26 +47,12 @@ unsigned long door_check_lasttime;
 unsigned long startup_time;
 unsigned long door_event_counter;
 
-#ifdef TG_ENABLED
-unsigned long tg_bot_lasttime;
-WiFiClientSecure tg_secured_client;
-UniversalTelegramBot bot(TG_BOT_TOKEN, tg_secured_client);
-#endif
-
-#ifdef PD_ENABLED
-WiFiClientSecure pd_secured_client;
-PagerDuty pg(PD_ROUTING_KEY, pd_secured_client);
-std::shared_ptr<PagerDutyEvent> current_pg_event;
-#endif
-
-auto bleDeviceScanner = new BLEDeviceScanner();
-
 bool wifi_connected;
 int current_door_state;
 int last_door_state;
 bool restart_flag;
 const String DOOR_OPENING_MSG = "The garage door has been OPENED.";
-const String DOOR_OPENING_MSG_WITH_KEY_FOB = "The garage door has been OPENED.\n\nKey fob detected.";
+const String DOOR_OPENING_MSG_WITH_KEY_FOB = "The garage door has been OPENED.\n\nKey fob detected - Will not be invoking PagerDuty or Webhook";
 const String DOOR_OPEN_MSG = "The garage door is currently OPEN.";
 const String DOOR_CLOSING_MSG = "The garage door has been CLOSED.";
 const String DOOR_CLOSED_MSG = "The garage door is currently CLOSED.";
@@ -155,17 +157,41 @@ void door_opened_event()
 
   DEBUG_PRINT(DOOR_OPENING_MSG);
 
+#ifdef BLE_ENABLED
   bool keyFobPresent = bleDeviceScanner->isBLEDeviceNearby(keyFobs);
+#else
+  bool keyFobPresent = false;
+#endif
 
 #ifdef TG_ENABLED
+  DEBUG_PRINT("Sending Telegram message");
   bot.sendMessage(TG_OWNER_CHAT_ID, (keyFobPresent ? DOOR_OPENING_MSG_WITH_KEY_FOB : DOOR_OPENING_MSG));
+  DEBUG_PRINT("Sent Telegram message");
+#endif
+
+  if (keyFobPresent)
+  {
+    return;
+  }
+
+#ifdef WEBHOOK_ENABLED
+  DEBUG_PRINT("Invoking webhook");
+  String webhookResponse;
+  if (webhook.trigger_webhook(webhookResponse) == SUCCESS)
+  {
+    DEBUG_PRINT("Invoked webhook");
+    DEBUG_PRINT(webhookResponse);
+  }
+  else
+  {
+    DEBUG_PRINT("Unable to invoke webhook");
+  }
 #endif
 
 #ifdef PD_ENABLED
-  if (!keyFobPresent)
-  {
-    current_pg_event = pg.create_event(CRITICAL, "Garage Door Opened", PD_SOURCE);
-  }
+  DEBUG_PRINT("Creating PagerDuty event");
+  current_pg_event = pg.create_event(CRITICAL, "Garage Door Opened", PD_SOURCE);
+  DEBUG_PRINT("Created PagerDuty event");
 #endif
 }
 
@@ -176,14 +202,32 @@ void door_closed_event()
   DEBUG_PRINT(DOOR_CLOSING_MSG);
 
 #ifdef TG_ENABLED
+  DEBUG_PRINT("Sending Telegram message");
   bot.sendMessage(TG_OWNER_CHAT_ID, DOOR_CLOSING_MSG);
+  DEBUG_PRINT("Sent Telegram message");
+#endif
+
+#ifdef WEBHOOK_ENABLED
+  DEBUG_PRINT("Invoking webhook");
+  String webhookResponse;
+  if (webhook.trigger_webhook(webhookResponse) == SUCCESS)
+  {
+    DEBUG_PRINT("Invoked webhook");
+    DEBUG_PRINT(webhookResponse);
+  }
+  else
+  {
+    DEBUG_PRINT("Unable to invoke webhook");
+  }
 #endif
 
 #ifdef PD_ENABLED
   if (current_pg_event.get() != NULL)
   {
+    DEBUG_PRINT("Resolving PagerDuty event");
     current_pg_event.get()->resolve();
     current_pg_event.reset();
+    DEBUG_PRINT("Resolved PagerDuty event");
   }
 #endif
 }
@@ -268,6 +312,13 @@ void handleNewMessages(int numNewMessages)
       uint32_t heap_size = ESP.getHeapSize();
       uint32_t free_heap = ESP.getFreeHeap();
 
+#ifdef BLE_ENABLED
+      bool keyFobPresent = bleDeviceScanner->isBLEDeviceNearby(keyFobs);
+      String keyFobStat = bleDeviceScanner->isBLEDeviceNearby(keyFobs) ? "YES" : "NO";
+#else
+      String keyFobStat = "No Support";
+#endif
+
       bot.sendMessage(
           chat_id,
           "Number of open door events: " + (String)door_event_counter +
@@ -276,7 +327,7 @@ void handleNewMessages(int numNewMessages)
               "\nHeap Usage: " + (String)(((float)(heap_size - free_heap) / heap_size) * 100) + "%" +
               "\nUptime: " + millisToString(millis() - startup_time) +
               "\nTTL Restart Due: " + millisToString(DEVICE_TTL - millis() - startup_time) +
-              "\nMonimoto Key Fob In Range: " + (bleDeviceScanner->isBLEDeviceNearby(keyFobs) ? "YES" : "NO"));
+              "\nMonimoto Key Fob In Range: " + keyFobStat);
     }
   }
 }
@@ -335,7 +386,9 @@ void setup()
 
   arduino_ota_setup();
 
+#ifdef BLE_ENABLED
   bleDeviceScanner->setup(BLE_SCAN_DURATION, BLE_MAX_RSSI);
+#endif
 
   String restart_reason = preferences.getString(PREFERENCE_RESTART_REASON_KEY, "");
   DEBUG_PRINT("Reboot reason: " + restart_reason);

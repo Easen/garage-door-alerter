@@ -24,9 +24,16 @@ const unsigned int WIFI_CONNECT_CHECK_INTERVAL = SECOND;
 const unsigned long TG_BOT_INTERVAL = 5 * SECOND;
 
 // BLE Key Fobs
+// #define BLE_ENABLED
 #define BLE_SCAN_DURATION 5
 #define BLE_MAX_RSSI -80
-std::vector<String> keyFobs = {"..."};
+
+// Webhook
+// #define WEBHOOK_ENABLED
+#define WEBHOOK_SSL false
+#define WEBHOOK_HOSTNAME "example.com"
+#define WEBHOOK_PORT 80
+#define WEBHOOK_PATH "/"
 
 // Device
 #define DEVICE_NAME "garage-door-alerter"

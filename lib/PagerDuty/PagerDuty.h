@@ -5,6 +5,7 @@
 #include <ArduinoJson.h>
 #include <Client.h>
 #include <ArxSmartPtr.h>
+#include "../HttpUtils/HttpUtils.h"
 
 // #define PAGER_DUTY_DEBUG 1
 
