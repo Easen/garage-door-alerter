@@ -293,8 +293,8 @@ void handleNewMessages(int numNewMessages)
       bot.sendMessage(chat_id, "Starting test in 3 seconds...");
       delay(3000);
       door_opened_event();
-      bot.sendMessage(chat_id, "Awaiting 10 seconds before triggering a close event...");
-      delay(10000);
+      bot.sendMessage(chat_id, "Awaiting 30 seconds before triggering a close event...");
+      delay(30 * 1000);
       door_closed_event();
       bot.sendMessage(chat_id, "Test complete! Re-arming the device in 3 seconds...");
       delay(3000);
