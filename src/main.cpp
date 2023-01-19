@@ -51,6 +51,8 @@ bool wifi_connected;
 int current_door_state;
 int last_door_state;
 bool restart_flag;
+bool keyFobPresent;
+
 const String DOOR_OPENING_MSG = "The garage door has been OPENED.";
 const String DOOR_OPENING_MSG_WITH_KEY_FOB = "The garage door has been OPENED.\n\nKey fob detected - Will not be invoking PagerDuty or Webhook";
 const String DOOR_OPEN_MSG = "The garage door is currently OPEN.";
@@ -158,9 +160,7 @@ void door_opened_event()
   DEBUG_PRINT(DOOR_OPENING_MSG);
 
 #ifdef BLE_ENABLED
-  bool keyFobPresent = bleDeviceScanner->isBLEDeviceNearby(keyFobs);
-#else
-  bool keyFobPresent = false;
+  keyFobPresent = bleDeviceScanner->isBLEDeviceNearby(keyFobs);
 #endif
 
 #ifdef TG_ENABLED
@@ -200,6 +200,12 @@ void door_closed_event()
   update_door_status_led(true);
 
   DEBUG_PRINT(DOOR_CLOSING_MSG);
+
+  if (keyFobPresent)
+  {
+    keyFobPresent = false;
+    return;
+  }
 
 #ifdef TG_ENABLED
   DEBUG_PRINT("Sending Telegram message");
@@ -444,12 +450,6 @@ void loop()
   if (millis() - startup_time > DEVICE_TTL)
   {
     DEBUG_PRINT("Reached device TTL - Restarting...");
-#ifdef TG_ENABLED
-    if (wifi_connected)
-    {
-      bot.sendMessage(TG_OWNER_CHAT_ID, "Device is restarting as it has reached its TTL");
-    }
-#endif
     preferences.putString(PREFERENCE_RESTART_REASON_KEY, "Device reached TTL");
     preferences.end();
     restart_flag = true;
